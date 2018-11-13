@@ -1,5 +1,6 @@
 import threading
 import urllib
+from urllib.parse import unquote
 import json
 import time
 from copy import copy
@@ -12,6 +13,7 @@ class ControlHandler(BaseHTTPRequestHandler):
     control = None
 
     def do_GET(self):
+        # Telemetry
         self.send_response(200)
         self.send_header('Content-type', "text/json")
         self.end_headers()
@@ -19,9 +21,10 @@ class ControlHandler(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
+        # Control
         content_length = int(self.headers['Content-Length'])    # Länge der Daten
         post_input = self.rfile.read(content_length)
-        post_json = json.loads(urllib.parse.unquote(str(post_input)[2:-1]))
+        post_json = json.loads(unquote(str(post_input)[2:-1]))
 
         if "target_state" in post_json:
             target_state = post_json.get("target_state")
@@ -76,7 +79,7 @@ class ControlState:
 
         self.motor_left = self.percentage_to_pwm(left_motor)
         self.motor_right = self.percentage_to_pwm(right_motor)
-        self.servo_pitch = self.pwm.pitch
+        self.servo_pitch = self.pwm.climb
 
     def pwm_to_percentage(self, pwm):
         perc = pwm*10 - 1
@@ -93,7 +96,6 @@ class ControlState:
         if pwm >= 1:
             return 1
         return pwm
-
 
 
 class Control:
@@ -113,7 +115,7 @@ class Control:
         self.sensors = sensors
 
         self._shutdown = False
-        self._control_loop = threading.Timer(1.0/CONTROL_LOOP_HERTZ, self._loop_once, args=[self])
+        self._control_loop = threading.Timer(1.0/self.CONTROL_LOOP_HERTZ, self._loop_once, args=[self])
         self._control_loop.start()
 
         ControlHandler.control = self
@@ -122,13 +124,11 @@ class Control:
         self._control_server_thread.daemon = True
         self._control_server_thread.start()
 
-
     def get_state(self):
         return {"motor_left": self.motor_left.value,
                 "motor_right": self.motor_right.value,
-                "servo_pitch": self.servo_pitch.value
+                "servo_pitch": self.servo_pitch.value,
                 "target_state": self.target_state}
-
 
     def set_state(self, input):
         self.target_state = input
@@ -143,5 +143,4 @@ class Control:
         self._shutdown = True
         self._control_loop.cancel()
         self._control_server.shutdown()
-        self._control_server.close()
         self._control_server_thread.join()
