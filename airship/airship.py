@@ -10,7 +10,12 @@ class Airship:
         self._shutdown = False
 
         self._sensors = Sensors()
-        self._control = Control()
+        self._control = Control(self._sensors)
+
+
+        self._telemetry_socket = socket.socket()
+        self._telemetry_socket.bind(("127.0.0.1", 3334))
+        self._telemetry_socket.listen(1)
 
     def fly(self):
         while not self._shutdown:
