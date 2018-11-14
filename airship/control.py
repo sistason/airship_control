@@ -30,38 +30,25 @@ class ControlHandler(BaseHTTPRequestHandler):
             target_state = post_json.get("target_state")
             self.control.set_state(ControlState(target_state.get("throttle", 0),
                                                 target_state.get("yaw", 0),
-                                                target_state.get("climb", 0),
-                                                type_=target_state.get("type", "perc")))
+                                                target_state.get("climb", 0)))
             self.send_response(201)
         else:
             self.send_response(404)
 
 
-class State(object):
+class ControlState:
+    THREE_D = False # Allow throttle unter 0?
+
     def __init__(self, throttle, yaw, climb):
         self.throttle = throttle
         self.yaw = yaw
         self.climb = climb
 
-
-class ControlState:
-    def __init__(self, throttle, yaw, climb, type_='perc'):
-        if type_ == 'perc':
-            self.perc = State(throttle, yaw, climb)
-            self.pwm = State(self.percentage_to_pwm(throttle),
-                             self.percentage_to_pwm(yaw),
-                             self.percentage_to_pwm(climb))
-        else:
-            self.pwm = State(throttle, yaw, climb)
-            self.perc = State(self.pwm_to_percentage(throttle),
-                              self.pwm_to_percentage(yaw),
-                              self.pwm_to_percentage(climb))
-
         self._convert_to_motors()
 
     def _convert_to_motors(self):
-        left_motor = self.perc.throttle + self.perc.yaw
-        right_motor = self.perc.throttle - self.perc.yaw
+        left_motor = self.throttle*100 + self.yaw*100
+        right_motor = self.throttle*100 - self.yaw*100
 
         scale_factor = 1
 
@@ -77,9 +64,18 @@ class ControlState:
         left_motor = int(left_motor * scale_factor)
         right_motor = int(right_motor * scale_factor)
 
-        self.motor_left = self.percentage_to_pwm(left_motor)
-        self.motor_right = self.percentage_to_pwm(right_motor)
-        self.servo_pitch = self.pwm.climb
+        self.motor_left = self.percentage_2d_to_pwm(left_motor if self.THREE_D else self._3d_to_2d(left_motor))
+        self.motor_right = self.percentage_2d_to_pwm(right_motor  if self.THREE_D else self._3d_to_2d(right_motor))
+        self.servo_pitch = self.percentage_2d_to_pwm(self._3d_to_2d(self.climb))
+
+    def _convert_to_2d(self, value):
+        return value if self.THREE_D else self._3d_to_2d(value)
+
+    def _2d_to_3d(self, value):
+        return -1 + (value * 2)
+
+    def _3d_to_2d(self, value):
+        return (value + 1) / 2.0
 
     def pwm_to_percentage(self, pwm):
         perc = pwm*10 - 1
@@ -89,19 +85,33 @@ class ControlState:
             return 1
         return perc
 
-    def percentage_to_pwm(self, percentage):
+    def percentage_2d_to_pwm(self, percentage):
         pwm = (percentage + 1) / 10
-        if pwm <= 0:
+        if pwm < 0.800:
             return 0
-        if pwm >= 1:
-            return 1
+        if pwm > 0.2200:
+            return 0.2200
         return pwm
+
+    def to_json(self):
+        return {"throttle": self.throttle,
+                "yaw": self.yaw,
+                "climb": self.climb,
+                "motor_left": self.motor_left,
+                "motor_right": self.motor_right,
+                "servo_pitch": self.servo_pitch}
+
+    def __str__(self):
+        return "L:{s.motor_left:3f} R:{s.motor_right:3f} P:{s.servo_pitch:3f}".format(s=self)
 
 
 class Control:
     CONTROL_LOOP_HERTZ = 50
 
     def __init__(self, sensors):
+        self._shutdown = False
+        self._control_loop = None
+
         self.motor_left = PWMLED(22)
         self.motor_left.value = 0
         self.motor_right = PWMLED(23)
@@ -114,30 +124,33 @@ class Control:
 
         self.sensors = sensors
 
-        self._shutdown = False
-        self._control_loop = threading.Timer(1.0/self.CONTROL_LOOP_HERTZ, self._loop_once, args=[self])
-        self._control_loop.start()
-
         ControlHandler.control = self
         self._control_server = HTTPServer(('localhost', 8080), ControlHandler)
         self._control_server_thread = threading.Thread(target=self._control_server.serve_forever)
         self._control_server_thread.daemon = True
         self._control_server_thread.start()
 
+        self._loop()
+
     def get_state(self):
-        return {"motor_left": self.motor_left.value,
-                "motor_right": self.motor_right.value,
-                "servo_pitch": self.servo_pitch.value,
-                "target_state": self.target_state}
+        return {"current_state": {"motor_left": self.motor_left.value,
+                                  "motor_right": self.motor_right.value,
+                                  "servo_pitch": self.servo_pitch.value},
+                "target_state": self.target_state.to_json()}
 
     def set_state(self, input):
         self.target_state = input
 
-    def _loop_once(self):
+    def _loop(self):
+        print(self.target_state)
+
         target_state = copy(self.target_state)
         self.motor_left.value = target_state.motor_left
         self.motor_right.value = target_state.motor_right
         self.servo_pitch.value = target_state.servo_pitch
+
+        self._control_loop = threading.Timer(1.0 / self.CONTROL_LOOP_HERTZ, self._loop)
+        self._control_loop.start()
 
     def stop(self):
         self._shutdown = True

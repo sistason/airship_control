@@ -14,8 +14,12 @@ class Airship:
 
     def fly(self):
         while not self._shutdown:
-            time.sleep(.1)
+            try:
+                time.sleep(.1)
+            except KeyboardInterrupt:
+                self._shutdown = True
 
+        self._control.stop()
 
 if __name__ == '__main__':
     airship = Airship()
