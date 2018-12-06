@@ -1,11 +1,18 @@
-Simple control of an RC-airship via wifi and not much comfort.
+Simple control of an RC-anything via wifi and not much comfort.
 
-### Hardware
+### Hardware Airship
 - Raspberry Pi Zero W
 - Raspberry ZeroCam (Fisheye)
 - 2x Motors+ESC+Props
 - 9g Servo for pitch-control
 - BerryIMU
+
+### Hardware RC-Car
+- Raspberry Pi 3
+- Raspberry Pi Cam (Wide Angle)
+- RC-Car with ESC to Pi
+- Steering to Pi
+- (BerryIMU?)
 
 ### Setup on Pi
 - raspbian lite
@@ -19,7 +26,7 @@ Simple control of an RC-airship via wifi and not much comfort.
 - touch boot/SSH && vim boot/wpa_supplicant.conf
 - boot up
 - passwd -d pi
-- apt install git python3-pip pigpio
-- git clone https://github.com/sistason/airship_control
-- cd airship_control; pip3 -r airship/requirements.txt install
+- apt install git python3-pip pigpio openvpn
+- git clone https://github.com/sistason/remote_control
+- cd remote_control; pip3 -r remote/requirements.txt install
 - raspi-config -> Serial enable

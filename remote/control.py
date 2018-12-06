@@ -1,39 +1,32 @@
 import threading
-import urllib
+import socketserver
 from urllib.parse import unquote
 import json
 import time
+import subprocess
 from copy import copy
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from gpiozero import PWMLED
 
 
-class ControlHandler(BaseHTTPRequestHandler):
+class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
+    pass
+
+
+class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
+    client = None
     control = None
 
-    def do_GET(self):
-        # Telemetry
-        self.send_response(200)
-        self.send_header('Content-type', "text/json")
-        self.end_headers()
-        self.wfile.write(bytes(json.dumps(self.control.get_state()), "utf-8"))
-        pass
+    def handle(self):
+        data = self.request.recv(1024)
+        target_state = json.loads(str(data, 'utf-8'))
+        print(target_state)
+        self.control.set_state(ControlState(target_state.get("throttle", 0),
+                                            target_state.get("yaw", 0),
+                                            target_state.get("climb", 0)))
 
-    def do_POST(self):
-        # Control
-        content_length = int(self.headers['Content-Length'])    # Länge der Daten
-        post_input = self.rfile.read(content_length)
-        post_json = json.loads(unquote(str(post_input)[2:-1]))
-
-        if "target_state" in post_json:
-            target_state = post_json.get("target_state")
-            self.control.set_state(ControlState(target_state.get("throttle", 0),
-                                                target_state.get("yaw", 0),
-                                                target_state.get("climb", 0)))
-            self.send_response(201)
-        else:
-            self.send_response(404)
+    def send_telemetry(self):
+        self.request.sendto(bytes(json.dumps(self.control.get_state()), "utf-8"), self.control.remote.CLIENT_ADDRESS)
 
 
 class ControlState:
@@ -47,6 +40,9 @@ class ControlState:
         self._convert_to_motors()
 
     def _convert_to_motors(self):
+        backwards_scale = -1 if self.throttle < 0 else 1
+        backwards = -1 if backwards_scale and self.THREE_D else 0
+
         left_motor = self.throttle*100 + self.yaw*100
         right_motor = self.throttle*100 - self.yaw*100
 
@@ -61,8 +57,8 @@ class ControlState:
             scale_factor = 100.0 / x
 
         # Use scale factor, and turn values back into integers
-        left_motor = int(left_motor * scale_factor)
-        right_motor = int(right_motor * scale_factor)
+        left_motor = int(left_motor * scale_factor * backwards) / 100.0
+        right_motor = int(right_motor * scale_factor * backwards) / 100.0
 
         self.motor_left = self.percentage_2d_to_pwm(left_motor if self.THREE_D else self._3d_to_2d(left_motor))
         self.motor_right = self.percentage_2d_to_pwm(right_motor  if self.THREE_D else self._3d_to_2d(right_motor))
@@ -71,13 +67,16 @@ class ControlState:
     def _convert_to_2d(self, value):
         return value if self.THREE_D else self._3d_to_2d(value)
 
-    def _2d_to_3d(self, value):
+    @staticmethod
+    def _2d_to_3d(value):
         return -1 + (value * 2)
 
-    def _3d_to_2d(self, value):
+    @staticmethod
+    def _3d_to_2d(value):
         return (value + 1) / 2.0
 
-    def pwm_to_percentage(self, pwm):
+    @staticmethod
+    def pwm_to_percentage(pwm):
         perc = pwm*10 - 1
         if perc <= 0:
             return 0
@@ -85,9 +84,10 @@ class ControlState:
             return 1
         return perc
 
-    def percentage_2d_to_pwm(self, percentage):
+    @staticmethod
+    def percentage_2d_to_pwm(percentage):
         pwm = (percentage + 1) / 10
-        if pwm < 0.800:
+        if pwm < 0.0800:
             return 0
         if pwm > 0.2200:
             return 0.2200
@@ -108,7 +108,7 @@ class ControlState:
 class Control:
     CONTROL_LOOP_HERTZ = 50
 
-    def __init__(self, sensors):
+    def __init__(self, remote, sensors):
         self._shutdown = False
         self._control_loop = None
 
@@ -123,9 +123,20 @@ class Control:
         self.target_state = ControlState(0, 0, 0)
 
         self.sensors = sensors
+        self.remote = remote
 
-        ControlHandler.control = self
-        self._control_server = HTTPServer(('localhost', 8080), ControlHandler)
+        proc = subprocess.call(["openvpn",
+                                "--proto", "tcp-server",
+                                "--dev-type", "tun",
+                                "--dev", self.remote.TUN_INTERFACE,
+                                "--resolv-retry", "infinite",
+                                "--ifconfig", self.remote.BIND_ADDRESS, self.remote.CLIENT_ADDRESS,
+                                "persist-key", "persist-tun",
+                                "--secret", "secret.key",
+                                "--keepalive", "2", "5"])
+
+        ThreadedUDPServer.control = self
+        self._control_server = ThreadedUDPServer((self.remote.BIND_ADDRESS, self.remote.CONTROL_PORT), ThreadedUDPRequestHandler)
         self._control_server_thread = threading.Thread(target=self._control_server.serve_forever)
         self._control_server_thread.daemon = True
         self._control_server_thread.start()
