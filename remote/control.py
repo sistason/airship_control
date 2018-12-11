@@ -1,32 +1,8 @@
 import threading
-import socketserver
-from urllib.parse import unquote
-import json
-import time
 import subprocess
 from copy import copy
 
 from gpiozero import PWMLED
-
-
-class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
-    pass
-
-
-class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
-    client = None
-    control = None
-
-    def handle(self):
-        data = self.request.recv(1024)
-        target_state = json.loads(str(data, 'utf-8'))
-        print(target_state)
-        self.control.set_state(ControlState(target_state.get("throttle", 0),
-                                            target_state.get("yaw", 0),
-                                            target_state.get("climb", 0)))
-
-    def send_telemetry(self):
-        self.request.sendto(bytes(json.dumps(self.control.get_state()), "utf-8"), self.control.remote.CLIENT_ADDRESS)
 
 
 class ControlState:
@@ -109,7 +85,6 @@ class Control:
     CONTROL_LOOP_HERTZ = 50
 
     def __init__(self, remote, sensors):
-        self._shutdown = False
         self._control_loop = None
 
         self.motor_left = PWMLED(22)
@@ -125,22 +100,7 @@ class Control:
         self.sensors = sensors
         self.remote = remote
 
-        proc = subprocess.call(["openvpn",
-                                "--proto", "tcp-server",
-                                "--dev-type", "tun",
-                                "--dev", self.remote.TUN_INTERFACE,
-                                "--resolv-retry", "infinite",
-                                "--ifconfig", self.remote.BIND_ADDRESS, self.remote.CLIENT_ADDRESS,
-                                "persist-key", "persist-tun",
-                                "--secret", "secret.key",
-                                "--keepalive", "2", "5"])
-
-        ThreadedUDPServer.control = self
-        self._control_server = ThreadedUDPServer((self.remote.BIND_ADDRESS, self.remote.CONTROL_PORT), ThreadedUDPRequestHandler)
-        self._control_server_thread = threading.Thread(target=self._control_server.serve_forever)
-        self._control_server_thread.daemon = True
-        self._control_server_thread.start()
-
+        self._start_vpn()
         self._loop()
 
     def get_state(self):
@@ -153,18 +113,35 @@ class Control:
         self.target_state = input
 
     def _loop(self):
-        print(self.target_state)
-
         target_state = copy(self.target_state)
         self.motor_left.value = target_state.motor_left
         self.motor_right.value = target_state.motor_right
         self.servo_pitch.value = target_state.servo_pitch
 
+        self._check_vpn()
+
         self._control_loop = threading.Timer(1.0 / self.CONTROL_LOOP_HERTZ, self._loop)
         self._control_loop.start()
 
+    def _check_vpn(self):
+        if self.vpn_proc.returncode:
+            print("restarting vpn...")
+            self._start_vpn()
+
+    def _start_vpn(self):
+        self.vpn_proc = subprocess.Popen(["/usr/sbin/openvpn",
+                                          "--proto", "tcp-server",
+                                          "--dev-type", "tun",
+                                          "--dev", self.remote.TUN_INTERFACE,
+                                          "--resolv-retry", "infinite",
+                                          "--ifconfig", self.remote.BIND_ADDRESS, self.remote.CLIENT_ADDRESS,
+                                          "--persist-key", "--persist-tun",
+                                          "--secret", "secret.key",
+                                          "--keepalive", "2", "5",
+                                          "--verb", "1"])
+
+
     def stop(self):
-        self._shutdown = True
         self._control_loop.cancel()
-        self._control_server.shutdown()
-        self._control_server_thread.join()
+        self.vpn_proc.terminate()
+
