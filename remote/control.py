@@ -1,5 +1,4 @@
 import threading
-import subprocess
 from copy import copy
 
 from gpiozero import PWMLED
@@ -100,7 +99,6 @@ class Control:
         self.sensors = sensors
         self.remote = remote
 
-        self._start_vpn()
         self._loop()
 
     def get_state(self):
@@ -118,30 +116,9 @@ class Control:
         self.motor_right.value = target_state.motor_right
         self.servo_pitch.value = target_state.servo_pitch
 
-        self._check_vpn()
-
         self._control_loop = threading.Timer(1.0 / self.CONTROL_LOOP_HERTZ, self._loop)
         self._control_loop.start()
 
-    def _check_vpn(self):
-        if self.vpn_proc.returncode:
-            print("restarting vpn...")
-            self._start_vpn()
-
-    def _start_vpn(self):
-        self.vpn_proc = subprocess.Popen(["/usr/sbin/openvpn",
-                                          "--proto", "tcp-server",
-                                          "--dev-type", "tun",
-                                          "--dev", self.remote.TUN_INTERFACE,
-                                          "--resolv-retry", "infinite",
-                                          "--ifconfig", self.remote.BIND_ADDRESS, self.remote.CLIENT_ADDRESS,
-                                          "--persist-key", "--persist-tun",
-                                          "--secret", "secret.key",
-                                          "--keepalive", "2", "5",
-                                          "--verb", "1"])
-
-
     def stop(self):
         self._control_loop.cancel()
-        self.vpn_proc.terminate()
 

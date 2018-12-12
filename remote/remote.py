@@ -2,6 +2,7 @@
 import time
 import json
 import threading
+import subprocess
 import socketserver
 
 from control import Control, ControlState
@@ -34,17 +35,31 @@ class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
 class Remote:
     CONTROL_PORT = 8081
     VIDEO_PORT = 8082
-    TUN_INTERFACE = "ptp-control"
+    VPN_INTERFACE = "ptp-control"
     BIND_ADDRESS = "172.31.31.33"
     CLIENT_ADDRESS = "172.31.31.34"
 
     def __init__(self):
         self.shutdown = False
 
+        self._start_vpn()
+
+        timeout = 4
+        while timeout > 0:
+            try:
+                self._control_server = ThreadedUDPServer((self.BIND_ADDRESS, self.CONTROL_PORT),
+                                                         ThreadedUDPRequestHandler)
+                break
+            except OSError:
+                timeout -= 1
+                time.sleep(0.5)
+        else:
+            print("Timeout while connecting to remote...")
+            return
+
         self.sensors = Sensors(self)
         self.control = Control(self, self.sensors)
 
-        self._control_server = ThreadedUDPServer((self.BIND_ADDRESS, self.CONTROL_PORT), ThreadedUDPRequestHandler)
         self._control_server.control = self.control
         self._control_server.sensors = self.sensors
 
@@ -52,16 +67,38 @@ class Remote:
         self._control_server_thread.daemon = True
         self._control_server_thread.start()
 
+    def _check_vpn(self):
+        if self.vpn_proc.returncode:
+            print("restarting vpn...")
+            self._start_vpn()
+
+    def _start_vpn(self):
+        self.vpn_proc = subprocess.Popen(["/usr/sbin/openvpn",
+                                          "--proto", "tcp-server",
+                                          "--dev-type", "tun",
+                                          "--dev", self.VPN_INTERFACE,
+                                          "--resolv-retry", "infinite",
+                                          "--ifconfig", self.BIND_ADDRESS, self.CLIENT_ADDRESS,
+                                          "--persist-key", "--persist-tun",
+                                          "--secret", "secret.key",
+                                          "--keepalive", "2", "5",
+                                          "--verb", "1"])
+
     def fly(self):
         while not self.shutdown:
             try:
-                time.sleep(.1)
+                time.sleep(1)
+                self._check_vpn()
             except KeyboardInterrupt:
                 self.shutdown = True
 
+        self.stop()
+
+    def stop(self):
         self.control.stop()
         self._control_server.shutdown()
         self._control_server_thread.join()
+        self.vpn_proc.terminate()
 
 
 if __name__ == '__main__':

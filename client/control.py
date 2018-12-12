@@ -113,9 +113,9 @@ class AirshipController:
         self.target_state = TargetState(0, 0, 0, font=self.font)
         self.current_state = None
 
-        self.tunnel = Tunnel(self)
-        self.communicator = Communicator(self)
-        self.video = Video(self)
+        self.tunnel = Tunnel(host)
+        self.communicator = Communicator(self.tunnel, self)
+        self.video = Video(self.tunnel, self)
 
         self.tunnel_thread = threading.Thread(target=self.tunnel.run)
         self.tunnel_thread.start()
@@ -176,6 +176,7 @@ class AirshipController:
 
     def stop(self):
         self.shutdown = True
+        self.tunnel.shutdown = True
         print("Stopping client...")
 
         self.tunnel_thread.join()
@@ -184,30 +185,41 @@ class AirshipController:
 
 
 class Tunnel:
-    def __init__(self, controller):
-        self.controller = controller
+    REMOTE_ADDRESS = "172.31.31.33"
+    BIND_ADDRESS = "172.31.31.34"
+    VPN_INTERFACE = "ptp-control"
+
+    def __init__(self, host):
+        self.host = host
+        self.shutdown = False
+        self.vpn = None
 
     def run(self):
-        proc = None
-        while not self.controller.shutdown:
-            if not proc:
+        while not self.shutdown:
+            if self.vpn is None:
                 try:
-                    proc = subprocess.Popen(["/usr/sbin/openvpn",
-                                     "--proto", "tcp-client",
-                                     "--dev-type", "tun",
-                                     "--dev", "ptp-control",
-                                     "--ifconfig", "172.31.31.34", "172.31.31.33",
-                                     "--remote", self.controller.host,
-                                     "--persist-key", "--persist-tun",
-                                     "--secret", "secret.key",
-                                     "--keepalive", "2", "5"])
+                    self._start_vpn()
                 except subprocess.SubprocessError:
-                    print("Error in VPN: {}".format(proc.communicate()))
+                    print("Error in VPN: {}".format(self.vpn.communicate()))
 
             time.sleep(0.5)
+            self.vpn.poll()
+            if self.vpn.returncode is not None:
+                self.vpn = None
 
-        if proc:
-            proc.kill()
+        if self.vpn:
+            self.vpn.terminate()
+
+    def _start_vpn(self):
+        self.vpn = subprocess.Popen(["/usr/sbin/openvpn",
+                                 "--proto", "tcp-client",
+                                 "--dev-type", "tun",
+                                 "--dev", self.VPN_INTERFACE,
+                                 "--ifconfig", self.BIND_ADDRESS, self.REMOTE_ADDRESS,
+                                 "--remote", self.host,
+                                 "--persist-key", "--persist-tun",
+                                 "--secret", "secret.key",
+                                 "--keepalive", "2", "5"], stdout=subprocess.DEVNULL)
 
 
 class Communicator:
@@ -215,24 +227,27 @@ class Communicator:
 
     def __init__(self, controller):
         self.controller = controller
+
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.send_queue = []
 
     def run(self):
         while not self.controller.shutdown:
             try:
-                self.control_socket.bind(("172.31.31.34", self.CONTROL_PORT))
+                self.control_socket.bind((self.controller.tunnel.BIND_ADDRESS, self.CONTROL_PORT))
+                break
             except OSError:
                 time.sleep(0.5)
-            break
 
         while not self.controller.shutdown:
             time.sleep(0.01)
-            readable, writable, exceptional = select.select([self.control_socket], [self.control_socket], [self.control_socket])
+            readable, writable, exceptional = select.select([self.control_socket],
+                                                            [self.control_socket],
+                                                            [self.control_socket])
             if self.send_queue and self.control_socket in writable:
                 data = self.send_queue.pop()
                 print('Sending {}...'.format(data))
-                self.control_socket.sendto(data, ("172.31.31.33", self.CONTROL_PORT))
+                self.control_socket.sendto(data, (self.controller.tunnel.REMOTE_ADDRESS, self.CONTROL_PORT))
             if self.control_socket in readable:
                 data = self.control_socket.recv(1024)
                 if data:
@@ -247,16 +262,16 @@ class Video:
 
     def __init__(self, controller):
         self.controller = controller
+        self.shutdown = False
         self.video_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def run(self):
         while not self.controller.shutdown:
             try:
-                self.video_socket.bind(('172.31.31.34', self.VIDEO_PORT))
+                self.video_socket.connect((self.controller.tunnel.REMOTE_ADDRESS, self.VIDEO_PORT))
+                break
             except OSError:
                 time.sleep(0.5)
-            break
-
         while not self.controller.shutdown:
             time.sleep(0.5)
 

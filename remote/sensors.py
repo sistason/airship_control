@@ -1,6 +1,5 @@
 import subprocess
 import threading
-import socket
 import time
 import re
 
@@ -20,7 +19,7 @@ class Sensors:
             try:
                 if proc is None:
                     check_ip = subprocess.check_output(["ip", "ro"])
-                    if check_ip.find(self.remote.BIND_ADDRESS):
+                    if str(check_ip).find(self.remote.BIND_ADDRESS):
                         proc = subprocess.Popen(["/usr/bin/raspivid","-t", "0", "-fps", "30", "-l",
                                                  "-h", "720", "-w", "1280",
                                                  "-o", "tcp://{}:{}".format(self.remote.BIND_ADDRESS,
