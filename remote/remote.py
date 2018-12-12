@@ -16,9 +16,11 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
 class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
     control = None
     sensors = None
+    client_socket = None
 
     def handle(self):
-        data = self.request.recv(1024)
+        self.client_socket = self.request[1]
+        data = self.request[0].strip()
         target_state = json.loads(str(data, 'utf-8'))
         print(target_state)
         self.control.set_state(ControlState(target_state.get("throttle", 0),
@@ -26,10 +28,12 @@ class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
                                             target_state.get("climb", 0)))
 
     def send_telemetry(self):
+        if self.client_socket is None:
+            return
         telemetry = self.control.get_state()
         telemetry['wifi_rssi'] = self.sensors.get_wifi_rssi()
 
-        self.request.sendto(bytes(json.dumps(telemetry), "utf-8"), self.control.remote.CLIENT_ADDRESS)
+        self.client_socket.sendto(bytes(json.dumps(telemetry), "utf-8"), self.control.remote.CLIENT_ADDRESS)
 
 
 class Remote:

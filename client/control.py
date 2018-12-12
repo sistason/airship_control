@@ -114,8 +114,8 @@ class AirshipController:
         self.current_state = None
 
         self.tunnel = Tunnel(host)
-        self.communicator = Communicator(self.tunnel, self)
-        self.video = Video(self.tunnel, self)
+        self.communicator = Communicator(self)
+        self.video = Video(self)
 
         self.tunnel_thread = threading.Thread(target=self.tunnel.run)
         self.tunnel_thread.start()
@@ -136,12 +136,10 @@ class AirshipController:
 
                     # Possible joystick actions: JOYAXISMOTION JOYBALLMOTION JOYBUTTONDOWN JOYBUTTONUP JOYHATMOTION
                     if event.type == pygame.JOYBUTTONDOWN or event.type == pygame.KEYDOWN:
-                        print("Joystick button '{}' pressed.".format(str(event.__dict__)))
                         function = FUNCTIONS.get(event.key)
                         self.pressed_functions.append(function)
 
                     if event.type == pygame.JOYBUTTONUP or event.type == pygame.KEYUP:
-                        print("Joystick button released.")
                         try:
                             function = FUNCTIONS.get(event.key)
                             self.pressed_functions.remove(function)
@@ -219,7 +217,7 @@ class Tunnel:
                                  "--remote", self.host,
                                  "--persist-key", "--persist-tun",
                                  "--secret", "secret.key",
-                                 "--keepalive", "2", "5"], stdout=subprocess.DEVNULL)
+                                 "--keepalive", "2", "5"])
 
 
 class Communicator:
@@ -229,15 +227,11 @@ class Communicator:
         self.controller = controller
 
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.control_socket.settimeout(3)
         self.send_queue = []
 
     def run(self):
-        while not self.controller.shutdown:
-            try:
-                self.control_socket.bind((self.controller.tunnel.BIND_ADDRESS, self.CONTROL_PORT))
-                break
-            except OSError:
-                time.sleep(0.5)
+        self._bind()
 
         while not self.controller.shutdown:
             time.sleep(0.01)
@@ -256,6 +250,14 @@ class Communicator:
                     self.control_socket.close()
                     return
 
+    def _bind(self):
+        while not self.controller.shutdown:
+            try:
+                self.control_socket.bind((self.controller.tunnel.BIND_ADDRESS, self.CONTROL_PORT))
+                break
+            except (OSError, TimeoutError, socket.timeout):
+                time.sleep(0.5)
+
 
 class Video:
     VIDEO_PORT = 8082
@@ -263,17 +265,29 @@ class Video:
     def __init__(self, controller):
         self.controller = controller
         self.shutdown = False
-        self.video_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.video_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.video_socket.settimeout(3)
 
     def run(self):
         while not self.controller.shutdown:
             try:
+                data = self.video_socket.recv(1024)
+                if not data:
+                    raise OSError
+            except OSError:
+                time.sleep(.5)
+                self._connect()
+                continue
+
+            time.sleep(0.5)
+
+    def _connect(self):
+        while not self.controller.shutdown:
+            try:
                 self.video_socket.connect((self.controller.tunnel.REMOTE_ADDRESS, self.VIDEO_PORT))
                 break
-            except OSError:
+            except (OSError, TimeoutError, socket.timeout):
                 time.sleep(0.5)
-        while not self.controller.shutdown:
-            time.sleep(0.5)
 
 
 if __name__ == '__main__':
