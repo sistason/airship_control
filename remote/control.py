@@ -116,6 +116,7 @@ class Control:
         self.motor_right.value = target_state.motor_right
         self.servo_pitch.value = target_state.servo_pitch
 
+        self.remote.control_server.send_telemetry()
         self._control_loop = threading.Timer(1.0 / self.CONTROL_LOOP_HERTZ, self._loop)
         self._control_loop.start()
 

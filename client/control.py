@@ -217,7 +217,7 @@ class Tunnel:
                                  "--remote", self.host,
                                  "--persist-key", "--persist-tun",
                                  "--secret", "secret.key",
-                                 "--keepalive", "2", "5"])
+                                 "--keepalive", "2", "5"], stdout=subprocess.DEVNULL)
 
 
 class Communicator:

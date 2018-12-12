@@ -35,10 +35,12 @@ class Sensors:
                 print("CalledProcessError while streaming: {}".format(e))
                 proc = None
             except KeyboardInterrupt:
-                return
+                break
             except Exception as e:
                 print("Exception while streaming: {}".format(e))
                 proc = None
+        if proc:
+            proc.terminate()
 
     @staticmethod
     def get_wifi_rssi():

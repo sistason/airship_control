@@ -10,30 +10,37 @@ from sensors import Sensors
 
 
 class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
-    pass
-
-
-class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
     control = None
     sensors = None
     client_socket = None
 
-    def handle(self):
-        self.client_socket = self.request[1]
-        data = self.request[0].strip()
-        target_state = json.loads(str(data, 'utf-8'))
-        print(target_state)
-        self.control.set_state(ControlState(target_state.get("throttle", 0),
-                                            target_state.get("yaw", 0),
-                                            target_state.get("climb", 0)))
+    def set_instances(self, control, sensors):
+        self.control = control
+        self.sensors = sensors
 
     def send_telemetry(self):
-        if self.client_socket is None:
+        if self.client_socket is None or self.control is None or self.sensors is None:
             return
         telemetry = self.control.get_state()
         telemetry['wifi_rssi'] = self.sensors.get_wifi_rssi()
 
         self.client_socket.sendto(bytes(json.dumps(telemetry), "utf-8"), self.control.remote.CLIENT_ADDRESS)
+
+
+class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
+
+    def handle(self):
+        self.server.client_socket = self.request[1]
+        data = self.request[0].strip()
+        target_state = json.loads(str(data, 'utf-8'))
+        if self.server.control is not None:
+            print(target_state)
+            self.server.control.set_state(ControlState(target_state.get("throttle", 0),
+                                                target_state.get("yaw", 0),
+                                                target_state.get("climb", 0)))
+
+
+
 
 
 class Remote:
@@ -51,7 +58,7 @@ class Remote:
         timeout = 4
         while timeout > 0:
             try:
-                self._control_server = ThreadedUDPServer((self.BIND_ADDRESS, self.CONTROL_PORT),
+                self.control_server = ThreadedUDPServer((self.BIND_ADDRESS, self.CONTROL_PORT),
                                                          ThreadedUDPRequestHandler)
                 break
             except OSError:
@@ -63,11 +70,9 @@ class Remote:
 
         self.sensors = Sensors(self)
         self.control = Control(self, self.sensors)
+        self.control_server.set_instances(self.control, self.sensors)
 
-        self._control_server.control = self.control
-        self._control_server.sensors = self.sensors
-
-        self._control_server_thread = threading.Thread(target=self._control_server.serve_forever)
+        self._control_server_thread = threading.Thread(target=self.control_server.serve_forever)
         self._control_server_thread.daemon = True
         self._control_server_thread.start()
 
@@ -100,7 +105,7 @@ class Remote:
 
     def stop(self):
         self.control.stop()
-        self._control_server.shutdown()
+        self.control_server.shutdown()
         self._control_server_thread.join()
         self.vpn_proc.terminate()
 
