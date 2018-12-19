@@ -6,7 +6,7 @@ import threading
 import json
 import time
 import copy
-
+from PIL import Image
 
 FUNCTIONS = {
     119: "throttle_more",   # w
@@ -23,7 +23,7 @@ FUNCTIONS = {
 
 
 class State:
-    def __init__(self, throttle, yaw, climb, font=None):
+    def __init__(self, throttle, yaw, climb, font=None, *args, **kwargs):
         self.throttle = throttle
         self.yaw = yaw
         self.climb = climb
@@ -41,7 +41,7 @@ class State:
 
     @staticmethod
     def from_json_data(data):
-        return State(**json.loads(data.decode('utf-8')))
+        return State(**json.loads(data.decode('utf-8')).get('target_state', {}))
 
     def draw(self):
         return self.font.render("Throttle: {}  Yaw: {}  Pitch: {}".format(self.throttle, self.yaw, self.climb),
@@ -100,7 +100,7 @@ class AirshipController:
         pygame.display.set_caption(str(self.__class__))
 
         # Set the width and height of the screen [width,height]
-        size = [800, 600]
+        size = [1280, 720]
         self.screen = pygame.display.set_mode(size)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 20)
@@ -156,9 +156,9 @@ class AirshipController:
 
                 self.screen.blit(self.font.render("Current State:", True, (255, 255, 255)), [10, 40])
                 if self.current_state:
-                    self.screen.blit(self.current_state.draw(), [10, 20])
+                    self.screen.blit(self.current_state.draw(), [10, 50])
                 else:
-                    self.screen.blit(self.font.render(" - ", True, (255, 255, 255)), [10, 20])
+                    self.screen.blit(self.font.render(" - ", True, (255, 255, 255)), [10, 50])
 
 
                 # Go ahead and update the screen with what we've drawn.
@@ -175,6 +175,7 @@ class AirshipController:
     def stop(self):
         self.shutdown = True
         self.tunnel.shutdown = True
+        self.video.shutdown = True
         print("Stopping client...")
 
         self.tunnel_thread.join()
@@ -240,7 +241,6 @@ class Communicator:
                                                             [self.control_socket])
             if self.send_queue and self.control_socket in writable:
                 data = self.send_queue.pop()
-                print('Sending {}...'.format(data))
                 self.control_socket.sendto(data, (self.controller.tunnel.REMOTE_ADDRESS, self.CONTROL_PORT))
             if self.control_socket in readable:
                 data = self.control_socket.recv(1024)
@@ -265,13 +265,35 @@ class Video:
     def __init__(self, controller):
         self.controller = controller
         self.shutdown = False
+        self.stream = None
         self.video_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.video_socket.settimeout(3)
 
     def run(self):
+        while not self.shutdown:
+            if self.stream is None:
+                try:
+                    self._start_stream()
+                except subprocess.SubprocessError:
+                    print("Error in Stream: {}".format(self.stream.communicate()))
+
+            time.sleep(0.5)
+            self.stream.poll()
+            if self.stream.returncode is not None:
+                self.stream = None
+
+        if self.stream:
+            self.stream.terminate()
+            print("terminated")
+        
+    def _start_stream(self):
+        nc = subprocess.Popen(["nc", "-l", "-p", str(self.VIDEO_PORT)], stdout=subprocess.PIPE)
+        self.stream = subprocess.Popen(["mplayer", "-fps", "200", "-demuxer", "h264es", '-'], stdin=nc.stdout)
+
+    def run2(self):
         while not self.controller.shutdown:
             try:
-                data = self.video_socket.recv(1024)
+                data = self.video_socket.recv(2048000)
                 if not data:
                     raise OSError
             except OSError:
@@ -279,12 +301,21 @@ class Video:
                 self._connect()
                 continue
 
+            print('got {} bytes'.format(len(data)))
+
+            try:
+                image = Image.frombytes("RGB", (1280, 720), data)
+            except ValueError:
+                time.sleep(0.5)
+                continue
+            img = pygame.image.frombuffer(image, (1280, 720), 'RGB')
+            self.controller.screen.blit(img, (0, 0))
             time.sleep(0.5)
 
     def _connect(self):
         while not self.controller.shutdown:
             try:
-                self.video_socket.connect((self.controller.tunnel.REMOTE_ADDRESS, self.VIDEO_PORT))
+                #self.video_socket.connect((self.controller.tunnel.REMOTE_ADDRESS, self.VIDEO_PORT))
                 break
             except (OSError, TimeoutError, socket.timeout):
                 time.sleep(0.5)

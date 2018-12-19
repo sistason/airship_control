@@ -9,9 +9,20 @@ class Sensors:
         #TODO: IMU?
         self.remote = remote
 
+        self._create_camera()
+
         self._camera_stream_thread = threading.Thread(target=self._stream_video)
         self._camera_stream_thread.daemon = True
         self._camera_stream_thread.start()
+
+    @staticmethod
+    def _create_camera():
+        subprocess.call(['modprobe', 'bcm2835-v4l2'])
+        ret = subprocess.call(["v4l2-ctl", "-v", "width=1280,height=720,pixelformat=H264",
+                               "--set-ctrl=exposure_dynamic_framerate=1",
+                               "--set-ctrl=video_bitrate=1000000",
+                               "--set-ctrl=scene_mode=8"])
+        return ret
 
     def _stream_video(self):
         proc = None
@@ -45,6 +56,6 @@ class Sensors:
     @staticmethod
     def get_wifi_rssi():
         wifi_link = subprocess.check_output(["/sbin/iw",  "dev", "wlan0", "link"])
-        match = re.search(r'Signal: (-?\d+) dBm', wifi_link)
+        match = re.search(r'Signal: (-?\d+) dBm', str(wifi_link, 'utf-8'))
         if match:
             return match.group(1)

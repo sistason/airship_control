@@ -12,9 +12,11 @@ class ControlState:
         self.yaw = yaw
         self.climb = climb
 
+        #self._convert_to_motors_directional()
         self._convert_to_motors()
+        self.servo_pitch = self.percentage_2d_to_pwm(self._3d_to_2d(self.climb))
 
-    def _convert_to_motors(self):
+    def _convert_to_motors_directional(self):
         backwards_scale = -1 if self.throttle < 0 else 1
         backwards = -1 if backwards_scale and self.THREE_D else 0
 
@@ -37,7 +39,10 @@ class ControlState:
 
         self.motor_left = self.percentage_2d_to_pwm(left_motor if self.THREE_D else self._3d_to_2d(left_motor))
         self.motor_right = self.percentage_2d_to_pwm(right_motor  if self.THREE_D else self._3d_to_2d(right_motor))
-        self.servo_pitch = self.percentage_2d_to_pwm(self._3d_to_2d(self.climb))
+
+    def _convert_to_motors(self):
+        self.motor_left = self.percentage_2d_to_pwm(self.throttle if self.THREE_D else self._3d_to_2d(self.throttle))
+        self.motor_right = self.motor_left
 
     def _convert_to_2d(self, value):
         return value if self.THREE_D else self._3d_to_2d(value)
@@ -86,12 +91,12 @@ class Control:
     def __init__(self, remote, sensors):
         self._control_loop = None
 
-        self.motor_left = PWMLED(22)
+        self.motor_left = PWMLED(23)
         self.motor_left.value = 0
-        self.motor_right = PWMLED(23)
-        self.motor_right.value = 0
+        #self.motor_right = PWMLED(24)
+        #self.motor_right.value = 0
 
-        self.servo_pitch = PWMLED(24)
+        self.servo_pitch = PWMLED(22)
         self.servo_pitch.value = 0
 
         self.target_state = ControlState(0, 0, 0)
@@ -103,7 +108,7 @@ class Control:
 
     def get_state(self):
         return {"current_state": {"motor_left": self.motor_left.value,
-                                  "motor_right": self.motor_right.value,
+                                  #"motor_right": self.motor_right.value,
                                   "servo_pitch": self.servo_pitch.value},
                 "target_state": self.target_state.to_json()}
 
@@ -113,7 +118,7 @@ class Control:
     def _loop(self):
         target_state = copy(self.target_state)
         self.motor_left.value = target_state.motor_left
-        self.motor_right.value = target_state.motor_right
+        #self.motor_right.value = target_state.motor_right
         self.servo_pitch.value = target_state.servo_pitch
 
         self.remote.control_server.send_telemetry()

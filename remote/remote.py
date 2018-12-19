@@ -13,24 +13,26 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
     control = None
     sensors = None
     client_socket = None
+    client_address = None
 
     def set_instances(self, control, sensors):
         self.control = control
         self.sensors = sensors
 
     def send_telemetry(self):
-        if self.client_socket is None or self.control is None or self.sensors is None:
+        if None in [self.client_socket, self.control, self.sensors, self.client_address]:
             return
         telemetry = self.control.get_state()
         telemetry['wifi_rssi'] = self.sensors.get_wifi_rssi()
 
-        self.client_socket.sendto(bytes(json.dumps(telemetry), "utf-8"), self.control.remote.CLIENT_ADDRESS)
+        self.client_socket.sendto(bytes(json.dumps(telemetry), "utf-8"), self.client_address)
 
 
 class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
         self.server.client_socket = self.request[1]
+        self.server.client_address = self.client_address
         data = self.request[0].strip()
         target_state = json.loads(str(data, 'utf-8'))
         if self.server.control is not None:
