@@ -31,9 +31,9 @@ class Sensors:
                 if proc is None:
                     check_ip = subprocess.check_output(["ip", "ro"])
                     if str(check_ip).find(self.remote.BIND_ADDRESS):
-                        proc = subprocess.Popen(["/usr/bin/raspivid","-t", "0", "-fps", "30", "-l",
+                        proc = subprocess.Popen(["/usr/bin/raspivid","-t", "0", "-fps", "60",
                                                  "-h", "720", "-w", "1280",
-                                                 "-o", "tcp://{}:{}".format(self.remote.BIND_ADDRESS,
+                                                 "-o", "tcp://{}:{}".format(self.remote.CLIENT_ADDRESS,
                                                                             self.remote.VIDEO_PORT)],
                                                 stdout=subprocess.DEVNULL)
 

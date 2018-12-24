@@ -1,7 +1,7 @@
 import threading
 from copy import copy
 
-from gpiozero import PWMLED
+from gpiozero import PWMLED, exc, Servo
 
 
 class ControlState:
@@ -14,7 +14,7 @@ class ControlState:
 
         #self._convert_to_motors_directional()
         self._convert_to_motors()
-        self.servo_pitch = self.percentage_2d_to_pwm(self._3d_to_2d(self.climb))
+        self.servo_pitch = self.climb
 
     def _convert_to_motors_directional(self):
         backwards_scale = -1 if self.throttle < 0 else 1
@@ -91,12 +91,12 @@ class Control:
     def __init__(self, remote, sensors):
         self._control_loop = None
 
-        self.motor_left = PWMLED(23)
+        self.motor_left = PWMLED(22, frequency=1000)
         self.motor_left.value = 0
         #self.motor_right = PWMLED(24)
         #self.motor_right.value = 0
 
-        self.servo_pitch = PWMLED(22)
+        self.servo_pitch = Servo(23)
         self.servo_pitch.value = 0
 
         self.target_state = ControlState(0, 0, 0)
@@ -117,9 +117,12 @@ class Control:
 
     def _loop(self):
         target_state = copy(self.target_state)
-        self.motor_left.value = target_state.motor_left
-        #self.motor_right.value = target_state.motor_right
-        self.servo_pitch.value = target_state.servo_pitch
+        try:
+            self.motor_left.value = target_state.motor_left
+            #self.motor_right.value = target_state.motor_right
+            self.servo_pitch.value = target_state.servo_pitch
+        except exc.OutputDeviceBadValue:
+            pass
 
         self.remote.control_server.send_telemetry()
         self._control_loop = threading.Timer(1.0 / self.CONTROL_LOOP_HERTZ, self._loop)

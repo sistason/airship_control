@@ -266,6 +266,7 @@ class Video:
         self.controller = controller
         self.shutdown = False
         self.stream = None
+        self.nc = None
         self.video_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.video_socket.settimeout(3)
 
@@ -284,11 +285,12 @@ class Video:
 
         if self.stream:
             self.stream.terminate()
+            self.nc.terminate()
             print("terminated")
         
     def _start_stream(self):
-        nc = subprocess.Popen(["nc", "-l", "-p", str(self.VIDEO_PORT)], stdout=subprocess.PIPE)
-        self.stream = subprocess.Popen(["mplayer", "-fps", "200", "-demuxer", "h264es", '-'], stdin=nc.stdout)
+        self.nc = subprocess.Popen(["nc", "-l", "-p", str(self.VIDEO_PORT)], stdout=subprocess.PIPE)
+        self.stream = subprocess.Popen(["mplayer", "-fps", "200", "-demuxer", "h264es", '-'], stdin=self.nc.stdout)
 
     def run2(self):
         while not self.controller.shutdown:
